@@ -1,6 +1,6 @@
 # =========================================================
 # AI GTM RAG MVP - PHASE 1
-# Streamlit + Gemini + FAISS
+# Streamlit + Gemini + FAISS + SentenceTransformers
 # =========================================================
 
 import streamlit as st
@@ -13,7 +13,14 @@ import fitz
 
 from docx import Document
 from pptx import Presentation
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+from langchain_text_splitters import (
+    RecursiveCharacterTextSplitter
+)
+
+from sentence_transformers import (
+    SentenceTransformer
+)
 
 # =========================================================
 # PAGE CONFIG
@@ -39,6 +46,21 @@ gemini_api_key = st.sidebar.text_input(
 
 if gemini_api_key:
     genai.configure(api_key=gemini_api_key)
+
+# =========================================================
+# LOAD EMBEDDING MODEL
+# =========================================================
+
+@st.cache_resource
+def load_embedding_model():
+
+    model = SentenceTransformer(
+        "all-MiniLM-L6-v2"
+    )
+
+    return model
+
+embedding_model = load_embedding_model()
 
 # =========================================================
 # SESSION STATE
@@ -134,13 +156,19 @@ def extract_text(uploaded_file):
 
         elif suffix == "txt":
 
-            with open(temp_path, "r", encoding="utf-8") as f:
+            with open(
+                temp_path,
+                "r",
+                encoding="utf-8"
+            ) as f:
+
                 text = f.read()
 
         else:
             text = ""
 
     finally:
+
         os.unlink(temp_path)
 
     return text
@@ -161,36 +189,16 @@ def chunk_text(text):
     return chunks
 
 # =========================================================
-# GEMINI EMBEDDINGS
+# EMBEDDINGS
 # =========================================================
 
-def get_document_embedding(text):
+def get_embedding(text):
 
     text = text[:8000]
 
-    response = genai.embed_content(
-        model="models/text-embedding-004",
-        content=text,
-        task_type="retrieval_document"
-    )
+    embedding = embedding_model.encode(text)
 
-    return response["embedding"]
-
-# =========================================================
-# QUERY EMBEDDING
-# =========================================================
-
-def get_query_embedding(text):
-
-    text = text[:8000]
-
-    response = genai.embed_content(
-        model="models/text-embedding-004",
-        content=text,
-        task_type="retrieval_query"
-    )
-
-    return response["embedding"]
+    return embedding
 
 # =========================================================
 # VECTOR STORE CREATION
@@ -200,17 +208,19 @@ def create_vector_store(chunks):
 
     embeddings = []
 
-    progress = st.progress(0)
+    progress_bar = st.progress(0)
 
-    total = len(chunks)
+    total_chunks = len(chunks)
 
     for idx, chunk in enumerate(chunks):
 
-        embedding = get_document_embedding(chunk)
+        embedding = get_embedding(chunk)
 
         embeddings.append(embedding)
 
-        progress.progress((idx + 1) / total)
+        progress_bar.progress(
+            (idx + 1) / total_chunks
+        )
 
     embeddings = np.array(
         embeddings
@@ -225,12 +235,12 @@ def create_vector_store(chunks):
     return index
 
 # =========================================================
-# SEMANTIC RETRIEVAL
+# RETRIEVAL
 # =========================================================
 
 def retrieve_chunks(query, top_k=5):
 
-    query_embedding = get_query_embedding(query)
+    query_embedding = get_embedding(query)
 
     query_embedding = np.array(
         [query_embedding]
@@ -253,7 +263,7 @@ def retrieve_chunks(query, top_k=5):
     return retrieved
 
 # =========================================================
-# GENERATE OUTPUT
+# GEMINI OUTPUT GENERATION
 # =========================================================
 
 def generate_output(role, output_type):
@@ -307,12 +317,14 @@ def generate_output(role, output_type):
         "gemini-1.5-pro"
     )
 
-    response = model.generate_content(prompt)
+    response = model.generate_content(
+        prompt
+    )
 
     return response.text
 
 # =========================================================
-# UPLOAD SCREEN
+# SCREEN 1 - UPLOAD
 # =========================================================
 
 st.header("1. Upload Artifacts")
@@ -332,7 +344,11 @@ if uploaded_files:
     if st.button("Process Files"):
 
         if not gemini_api_key:
-            st.error("Please enter Gemini API Key")
+
+            st.error(
+                "Please enter Gemini API Key"
+            )
+
             st.stop()
 
         all_chunks = []
@@ -342,7 +358,9 @@ if uploaded_files:
 
         for file in uploaded_files:
 
-            st.write(f"Reading: {file.name}")
+            st.write(
+                f"Reading: {file.name}"
+            )
 
             extracted_text = extract_text(file)
 
@@ -354,7 +372,9 @@ if uploaded_files:
 
                 continue
 
-            chunks = chunk_text(extracted_text)
+            chunks = chunk_text(
+                extracted_text
+            )
 
             for idx, chunk in enumerate(chunks):
 
@@ -367,24 +387,40 @@ if uploaded_files:
 
         if len(all_chunks) == 0:
 
-            st.error("No valid content extracted")
+            st.error(
+                "No valid content extracted"
+            )
+
             st.stop()
 
-        st.subheader("Creating Embeddings & Vector Store")
+        st.subheader(
+            "Creating Vector Store"
+        )
 
         vector_store = create_vector_store(
             all_chunks
         )
 
-        st.session_state.vector_store = vector_store
-        st.session_state.chunks = all_chunks
-        st.session_state.metadata = all_metadata
+        st.session_state.vector_store = (
+            vector_store
+        )
+
+        st.session_state.chunks = (
+            all_chunks
+        )
+
+        st.session_state.metadata = (
+            all_metadata
+        )
+
         st.session_state.processed = True
 
-        st.success("Files Processed Successfully")
+        st.success(
+            "Files Processed Successfully"
+        )
 
 # =========================================================
-# AI UNDERSTANDING SCREEN
+# SCREEN 2 - AI UNDERSTANDING
 # =========================================================
 
 if st.session_state.processed:
@@ -407,23 +443,31 @@ if st.session_state.processed:
             len(uploaded_files)
         )
 
-    with st.expander("View Sample Chunks"):
+    with st.expander(
+        "View Sample Chunks"
+    ):
 
         for idx, chunk in enumerate(
             st.session_state.chunks[:5]
         ):
 
-            st.markdown(f"### Chunk {idx+1}")
+            st.markdown(
+                f"### Chunk {idx + 1}"
+            )
 
-            st.write(chunk[:1000])
+            st.write(
+                chunk[:1000]
+            )
 
 # =========================================================
-# ROLE-BASED OUTPUT SCREEN
+# SCREEN 3 - ROLE BASED OUTPUTS
 # =========================================================
 
 if st.session_state.processed:
 
-    st.header("3. Role-Based Output Generation")
+    st.header(
+        "3. Role-Based Output Generation"
+    )
 
     col1, col2 = st.columns(2)
 
@@ -452,16 +496,22 @@ if st.session_state.processed:
             ]
         )
 
-    if st.button("Generate Output"):
+    if st.button(
+        "Generate Output"
+    ):
 
-        with st.spinner("Generating AI Output..."):
+        with st.spinner(
+            "Generating AI Output..."
+        ):
 
             output = generate_output(
                 role,
                 output_type
             )
 
-        st.subheader("Generated Output")
+        st.subheader(
+            "Generated Output"
+        )
 
         st.markdown(output)
 
@@ -472,5 +522,5 @@ if st.session_state.processed:
 st.divider()
 
 st.caption(
-    "Phase-1 MVP | Streamlit + Gemini + FAISS"
+    "Phase-1 MVP | Streamlit + Gemini + FAISS + SentenceTransformers"
 )

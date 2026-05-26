@@ -5,5 +5,5 @@ numpy
 pymupdf
 python-docx
 python-pptx
-langchain
+langchain-text-splitters
 tiktoken

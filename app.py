@@ -164,11 +164,30 @@ def chunk_text(text):
 # GEMINI EMBEDDINGS
 # =========================================================
 
-def get_embedding(text):
+def get_document_embedding(text):
+
+    text = text[:8000]
 
     response = genai.embed_content(
-        model="models/embedding-001",
-        content=text
+        model="models/text-embedding-004",
+        content=text,
+        task_type="retrieval_document"
+    )
+
+    return response["embedding"]
+
+# =========================================================
+# QUERY EMBEDDING
+# =========================================================
+
+def get_query_embedding(text):
+
+    text = text[:8000]
+
+    response = genai.embed_content(
+        model="models/text-embedding-004",
+        content=text,
+        task_type="retrieval_query"
     )
 
     return response["embedding"]
@@ -187,7 +206,7 @@ def create_vector_store(chunks):
 
     for idx, chunk in enumerate(chunks):
 
-        embedding = get_embedding(chunk)
+        embedding = get_document_embedding(chunk)
 
         embeddings.append(embedding)
 
@@ -211,7 +230,7 @@ def create_vector_store(chunks):
 
 def retrieve_chunks(query, top_k=5):
 
-    query_embedding = get_embedding(query)
+    query_embedding = get_query_embedding(query)
 
     query_embedding = np.array(
         [query_embedding]
@@ -239,12 +258,16 @@ def retrieve_chunks(query, top_k=5):
 
 def generate_output(role, output_type):
 
-    query = f"""
-    Generate {output_type} for {role}.
-    Focus on enterprise implementation context.
+    retrieval_query = f"""
+    Enterprise implementation details for:
+    {role}
+    related to:
+    {output_type}
     """
 
-    retrieved_chunks = retrieve_chunks(query)
+    retrieved_chunks = retrieve_chunks(
+        retrieval_query
+    )
 
     context = ""
 
@@ -256,7 +279,7 @@ def generate_output(role, output_type):
         CONTENT:
         {item['chunk']}
 
-        ------------------------
+        -----------------------------------
         """
 
     prompt = f"""
@@ -277,6 +300,7 @@ def generate_output(role, output_type):
     - Generate enterprise-ready output
     - Use structured formatting
     - Be practical and implementation-focused
+    - Mention assumptions if context is insufficient
     """
 
     model = genai.GenerativeModel(
@@ -288,7 +312,7 @@ def generate_output(role, output_type):
     return response.text
 
 # =========================================================
-# SCREEN 1 - UPLOAD
+# UPLOAD SCREEN
 # =========================================================
 
 st.header("1. Upload Artifacts")
@@ -322,6 +346,14 @@ if uploaded_files:
 
             extracted_text = extract_text(file)
 
+            if not extracted_text.strip():
+
+                st.warning(
+                    f"No readable text found in {file.name}"
+                )
+
+                continue
+
             chunks = chunk_text(extracted_text)
 
             for idx, chunk in enumerate(chunks):
@@ -333,7 +365,12 @@ if uploaded_files:
                     "chunk_id": idx
                 })
 
-        st.subheader("Creating Vector Store")
+        if len(all_chunks) == 0:
+
+            st.error("No valid content extracted")
+            st.stop()
+
+        st.subheader("Creating Embeddings & Vector Store")
 
         vector_store = create_vector_store(
             all_chunks
@@ -347,14 +384,28 @@ if uploaded_files:
         st.success("Files Processed Successfully")
 
 # =========================================================
-# SCREEN 2 - AI UNDERSTANDING
+# AI UNDERSTANDING SCREEN
 # =========================================================
 
 if st.session_state.processed:
 
     st.header("2. AI Understanding")
 
-    st.write(f"Total Chunks: {len(st.session_state.chunks)}")
+    col1, col2 = st.columns(2)
+
+    with col1:
+
+        st.metric(
+            "Total Chunks",
+            len(st.session_state.chunks)
+        )
+
+    with col2:
+
+        st.metric(
+            "Documents Processed",
+            len(uploaded_files)
+        )
 
     with st.expander("View Sample Chunks"):
 
@@ -367,7 +418,7 @@ if st.session_state.processed:
             st.write(chunk[:1000])
 
 # =========================================================
-# SCREEN 3 - ROLE-BASED OUTPUTS
+# ROLE-BASED OUTPUT SCREEN
 # =========================================================
 
 if st.session_state.processed:

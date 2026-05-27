@@ -1,6 +1,6 @@
 # =========================================================
 # AI IMPLEMENTATION ENABLEMENT ASSISTANT
-# Streamlit + Gemini + FAISS + SentenceTransformers
+# STABLE MVP VERSION
 # =========================================================
 
 import streamlit as st
@@ -12,16 +12,11 @@ import numpy as np
 import faiss
 import fitz
 
-from PIL import Image
 from docx import Document
 from pptx import Presentation
-
+from sentence_transformers import SentenceTransformer
 from langchain_text_splitters import (
     RecursiveCharacterTextSplitter
-)
-
-from sentence_transformers import (
-    SentenceTransformer
 )
 
 # =========================================================
@@ -38,8 +33,15 @@ st.title(
 )
 
 st.caption(
-    "Upload implementation artifacts and generate role-specific enablement outputs"
+    "Upload implementation artifacts and generate team-specific enablement outputs"
 )
+
+# =========================================================
+# CONFIG
+# =========================================================
+
+MAX_CONTEXT_LENGTH = 12000
+TOP_K_RESULTS = 3
 
 # =========================================================
 # SIDEBAR
@@ -53,7 +55,10 @@ gemini_api_key = st.sidebar.text_input(
 )
 
 if gemini_api_key:
-    genai.configure(api_key=gemini_api_key)
+
+    genai.configure(
+        api_key=gemini_api_key
+    )
 
 # =========================================================
 # IMAGE STORAGE
@@ -101,140 +106,49 @@ if "processed" not in st.session_state:
     st.session_state.processed = False
 
 # =========================================================
-# PDF TEXT + IMAGE EXTRACTION
+# PDF EXTRACTION
 # =========================================================
 
-def extract_pdf_content(file_path, file_name):
+def extract_pdf_content(
+    file_path,
+    file_name
+):
 
     text = ""
 
     extracted_images = []
 
-    doc = fitz.open(file_path)
+    try:
 
-    for page_index, page in enumerate(doc):
+        doc = fitz.open(file_path)
 
-        page_text = page.get_text()
+        for page in doc:
 
-        text += page_text + "\n"
+            page_text = page.get_text()
 
-        image_list = page.get_images(full=True)
+            text += page_text + "\n"
 
-        for img_index, img in enumerate(image_list):
+            image_list = page.get_images(
+                full=True
+            )
 
-            try:
-
-                xref = img[0]
-
-                base_image = doc.extract_image(xref)
-
-                image_bytes = base_image["image"]
-
-                image_ext = base_image["ext"]
-
-                image_name = (
-                    f"{uuid.uuid4()}.{image_ext}"
-                )
-
-                image_path = os.path.join(
-                    IMAGE_DIR,
-                    image_name
-                )
-
-                with open(image_path, "wb") as f:
-                    f.write(image_bytes)
-
-                extracted_images.append({
-                    "image_path": image_path,
-                    "source_file": file_name,
-                    "related_text": page_text[:1000]
-                })
-
-            except:
-                pass
-
-    return text, extracted_images
-
-# =========================================================
-# DOCX TEXT + IMAGE EXTRACTION
-# =========================================================
-
-def extract_docx_content(file_path, file_name):
-
-    doc = Document(file_path)
-
-    text = "\n".join(
-        [para.text for para in doc.paragraphs]
-    )
-
-    extracted_images = []
-
-    rels = doc.part._rels
-
-    for rel in rels:
-
-        rel_obj = rels[rel]
-
-        if "image" in rel_obj.target_ref:
-
-            try:
-
-                image_data = rel_obj.target_part.blob
-
-                image_name = (
-                    f"{uuid.uuid4()}.png"
-                )
-
-                image_path = os.path.join(
-                    IMAGE_DIR,
-                    image_name
-                )
-
-                with open(image_path, "wb") as f:
-                    f.write(image_data)
-
-                extracted_images.append({
-                    "image_path": image_path,
-                    "source_file": file_name,
-                    "related_text": text[:1000]
-                })
-
-            except:
-                pass
-
-    return text, extracted_images
-
-# =========================================================
-# PPT TEXT + IMAGE EXTRACTION
-# =========================================================
-
-def extract_pptx_content(file_path, file_name):
-
-    prs = Presentation(file_path)
-
-    text = ""
-
-    extracted_images = []
-
-    for slide_index, slide in enumerate(prs.slides):
-
-        slide_text = ""
-
-        for shape in slide.shapes:
-
-            if hasattr(shape, "text"):
-
-                slide_text += shape.text + "\n"
-
-            if shape.shape_type == 13:
+            for img in image_list:
 
                 try:
 
-                    image = shape.image
+                    xref = img[0]
 
-                    image_bytes = image.blob
+                    base_image = (
+                        doc.extract_image(xref)
+                    )
 
-                    image_ext = image.ext
+                    image_bytes = (
+                        base_image["image"]
+                    )
+
+                    image_ext = (
+                        base_image["ext"]
+                    )
 
                     image_name = (
                         f"{uuid.uuid4()}.{image_ext}"
@@ -245,19 +159,171 @@ def extract_pptx_content(file_path, file_name):
                         image_name
                     )
 
-                    with open(image_path, "wb") as f:
+                    with open(
+                        image_path,
+                        "wb"
+                    ) as f:
+
                         f.write(image_bytes)
 
                     extracted_images.append({
                         "image_path": image_path,
                         "source_file": file_name,
-                        "related_text": slide_text[:1000]
+                        "related_text":
+                            page_text[:500]
                     })
 
                 except:
                     pass
 
-        text += slide_text + "\n"
+    except:
+        pass
+
+    return text, extracted_images
+
+# =========================================================
+# DOCX EXTRACTION
+# =========================================================
+
+def extract_docx_content(
+    file_path,
+    file_name
+):
+
+    text = ""
+
+    extracted_images = []
+
+    try:
+
+        doc = Document(file_path)
+
+        text = "\n".join(
+            [
+                para.text
+                for para in doc.paragraphs
+            ]
+        )
+
+        rels = doc.part._rels
+
+        for rel in rels:
+
+            rel_obj = rels[rel]
+
+            if "image" in rel_obj.target_ref:
+
+                try:
+
+                    image_data = (
+                        rel_obj.target_part.blob
+                    )
+
+                    image_name = (
+                        f"{uuid.uuid4()}.png"
+                    )
+
+                    image_path = os.path.join(
+                        IMAGE_DIR,
+                        image_name
+                    )
+
+                    with open(
+                        image_path,
+                        "wb"
+                    ) as f:
+
+                        f.write(image_data)
+
+                    extracted_images.append({
+                        "image_path": image_path,
+                        "source_file": file_name,
+                        "related_text":
+                            text[:500]
+                    })
+
+                except:
+                    pass
+
+    except:
+        pass
+
+    return text, extracted_images
+
+# =========================================================
+# PPTX EXTRACTION
+# =========================================================
+
+def extract_pptx_content(
+    file_path,
+    file_name
+):
+
+    text = ""
+
+    extracted_images = []
+
+    try:
+
+        prs = Presentation(file_path)
+
+        for slide in prs.slides:
+
+            slide_text = ""
+
+            for shape in slide.shapes:
+
+                if hasattr(shape, "text"):
+
+                    slide_text += (
+                        shape.text + "\n"
+                    )
+
+                # Picture shape
+                if shape.shape_type == 13:
+
+                    try:
+
+                        image = shape.image
+
+                        image_bytes = image.blob
+
+                        image_ext = image.ext
+
+                        image_name = (
+                            f"{uuid.uuid4()}.{image_ext}"
+                        )
+
+                        image_path = os.path.join(
+                            IMAGE_DIR,
+                            image_name
+                        )
+
+                        with open(
+                            image_path,
+                            "wb"
+                        ) as f:
+
+                            f.write(image_bytes)
+
+                        extracted_images.append({
+                            "image_path":
+                                image_path,
+
+                            "source_file":
+                                file_name,
+
+                            "related_text":
+                                slide_text[:500]
+                        })
+
+                    except:
+                        pass
+
+            text += slide_text + "\n"
+
+    except:
+        pass
 
     return text, extracted_images
 
@@ -265,17 +331,25 @@ def extract_pptx_content(file_path, file_name):
 # TXT EXTRACTION
 # =========================================================
 
-def extract_txt_content(file_path):
+def extract_txt_content(
+    file_path
+):
 
-    with open(
-        file_path,
-        "r",
-        encoding="utf-8"
-    ) as f:
+    try:
 
-        text = f.read()
+        with open(
+            file_path,
+            "r",
+            encoding="utf-8"
+        ) as f:
 
-    return text, []
+            text = f.read()
+
+        return text, []
+
+    except:
+
+        return "", []
 
 # =========================================================
 # GENERIC EXTRACTION
@@ -294,7 +368,9 @@ def extract_content(uploaded_file):
         suffix=f".{suffix}"
     ) as tmp:
 
-        tmp.write(uploaded_file.read())
+        tmp.write(
+            uploaded_file.read()
+        )
 
         temp_path = tmp.name
 
@@ -302,29 +378,37 @@ def extract_content(uploaded_file):
 
         if suffix == "pdf":
 
-            text, images = extract_pdf_content(
-                temp_path,
-                uploaded_file.name
+            text, images = (
+                extract_pdf_content(
+                    temp_path,
+                    uploaded_file.name
+                )
             )
 
         elif suffix == "docx":
 
-            text, images = extract_docx_content(
-                temp_path,
-                uploaded_file.name
+            text, images = (
+                extract_docx_content(
+                    temp_path,
+                    uploaded_file.name
+                )
             )
 
         elif suffix == "pptx":
 
-            text, images = extract_pptx_content(
-                temp_path,
-                uploaded_file.name
+            text, images = (
+                extract_pptx_content(
+                    temp_path,
+                    uploaded_file.name
+                )
             )
 
         elif suffix == "txt":
 
-            text, images = extract_txt_content(
-                temp_path
+            text, images = (
+                extract_txt_content(
+                    temp_path
+                )
             )
 
         else:
@@ -345,8 +429,8 @@ def extract_content(uploaded_file):
 def chunk_text(text):
 
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1200,
-        chunk_overlap=250
+        chunk_size=700,
+        chunk_overlap=100
     )
 
     chunks = splitter.split_text(text)
@@ -359,11 +443,19 @@ def chunk_text(text):
 
 def get_embedding(text):
 
-    text = text[:8000]
+    try:
 
-    embedding = embedding_model.encode(text)
+        text = text[:3000]
 
-    return embedding
+        embedding = (
+            embedding_model.encode(text)
+        )
+
+        return embedding
+
+    except:
+
+        return np.zeros(384)
 
 # =========================================================
 # VECTOR STORE
@@ -405,84 +497,118 @@ def create_vector_store(chunks):
 # RETRIEVAL
 # =========================================================
 
-def retrieve_chunks(query, top_k=6):
+def retrieve_chunks(
+    query,
+    top_k=TOP_K_RESULTS
+):
 
-    query_embedding = get_embedding(query)
+    try:
 
-    query_embedding = np.array(
-        [query_embedding]
-    ).astype("float32")
-
-    distances, indices = (
-        st.session_state.vector_store.search(
-            query_embedding,
-            top_k
+        query_embedding = get_embedding(
+            query
         )
-    )
 
-    retrieved = []
+        query_embedding = np.array(
+            [query_embedding]
+        ).astype("float32")
 
-    for idx in indices[0]:
+        distances, indices = (
+            st.session_state.vector_store.search(
+                query_embedding,
+                top_k
+            )
+        )
 
-        retrieved.append({
-            "chunk":
-                st.session_state.chunks[idx],
+        retrieved = []
 
-            "metadata":
-                st.session_state.metadata[idx]
-        })
+        for idx in indices[0]:
 
-    return retrieved
+            retrieved.append({
+                "chunk":
+                    st.session_state.chunks[idx],
+
+                "metadata":
+                    st.session_state.metadata[idx]
+            })
+
+        return retrieved
+
+    except:
+
+        return []
 
 # =========================================================
 # IMAGE RETRIEVAL
 # =========================================================
 
-def retrieve_related_images(retrieved_chunks):
+def retrieve_related_images(
+    retrieved_chunks
+):
 
     matched_images = []
 
-    for chunk in retrieved_chunks:
+    try:
 
-        chunk_text = (
-            chunk["chunk"].lower()
-        )
+        for chunk in retrieved_chunks:
 
-        for image_data in st.session_state.images:
-
-            related_text = (
-                image_data["related_text"]
-                .lower()
+            chunk_text = (
+                chunk["chunk"].lower()
             )
 
-            if any(
-                word in related_text
-                for word in chunk_text.split()[:20]
+            chunk_words = (
+                chunk_text.split()[:15]
+            )
+
+            for image_data in (
+                st.session_state.images
             ):
 
-                matched_images.append(
-                    image_data
+                related_text = (
+                    image_data["related_text"]
+                    .lower()
                 )
 
-    unique_images = []
+                if any(
+                    word in related_text
+                    for word in chunk_words
+                ):
 
-    seen = set()
+                    matched_images.append(
+                        image_data
+                    )
 
-    for img in matched_images:
+        unique_images = []
 
-        if img["image_path"] not in seen:
+        seen = set()
 
-            unique_images.append(img)
+        for img in matched_images:
 
-            seen.add(img["image_path"])
+            if (
+                img["image_path"]
+                not in seen
+            ):
 
-    return unique_images[:5]
+                unique_images.append(img)
+
+                seen.add(
+                    img["image_path"]
+                )
+
+        return unique_images[:3]
+
+    except:
+
+        return []
 
 # =========================================================
-# PROMPT GENERATION
+# PROMPT BUILDER
 # =========================================================
 
-def build_prompt(team, context):
+def build_prompt(
+    team,
+    context,
+    additional_instruction
+):
 
     if team == "Functional Team":
 
@@ -496,9 +622,6 @@ def build_prompt(team, context):
         - dependencies
         - configurations
         - assumptions
-        - workflow guidance
-
-        Keep practical and implementation-focused.
         """
 
     elif team == "Technical Team":
@@ -508,13 +631,10 @@ def build_prompt(team, context):
 
         Include:
         - impacted modules
+        - integrations
         - technical dependencies
-        - integration considerations
         - customization points
         - validations
-        - technical assumptions
-
-        Keep implementation-focused.
         """
 
     else:
@@ -526,11 +646,8 @@ def build_prompt(team, context):
         - troubleshooting guidance
         - FAQs
         - issue scenarios
-        - support checkpoints
-        - known limitations
-        - validations
-
-        Keep practical for support teams.
+        - checkpoints
+        - limitations
         """
 
     prompt = f"""
@@ -542,30 +659,35 @@ def build_prompt(team, context):
     CONTEXT:
     {context}
 
-    INSTRUCTIONS:
+    ADDITIONAL INSTRUCTIONS:
+    {additional_instruction}
+
+    TASK:
     {instructions}
 
     RULES:
     - Use only provided context
     - Do not hallucinate
+    - Keep concise
     - Use structured formatting
-    - Mention assumptions where needed
-    - Keep concise and enterprise-ready
+    - Mention assumptions if needed
     """
 
     return prompt
 
 # =========================================================
-# GENERATE OUTPUT
+# OUTPUT GENERATION
 # =========================================================
 
-def generate_output(team, additional_instruction):
+def generate_output(
+    team,
+    additional_instruction
+):
 
     retrieval_query = f"""
     Enterprise implementation details
     for {team}
 
-    Additional Context:
     {additional_instruction}
     """
 
@@ -573,39 +695,65 @@ def generate_output(team, additional_instruction):
         retrieval_query
     )
 
+    if len(retrieved_chunks) == 0:
+
+        return (
+            "No relevant content found.",
+            []
+        )
+
     context = ""
 
     for item in retrieved_chunks:
 
         context += f"""
+
         FILE:
         {item['metadata']['file_name']}
 
         CONTENT:
         {item['chunk']}
 
-        -----------------------------------
+        --------------------------------
         """
+
+    # VERY IMPORTANT
+    context = context[:MAX_CONTEXT_LENGTH]
 
     prompt = build_prompt(
         team,
-        context
+        context,
+        additional_instruction
     )
 
-    model = genai.GenerativeModel(
-        "gemini-2.5-flash"
+    related_images = (
+        retrieve_related_images(
+            retrieved_chunks
+        )
     )
 
-    response = model.generate_content(
-        prompt
-    )
+    try:
 
-    related_images = retrieve_related_images(
-        retrieved_chunks
-    )
+        model = genai.GenerativeModel(
+            "gemini-1.5-flash"
+        )
+
+        response = model.generate_content(
+            prompt
+        )
+
+        output_text = response.text
+
+    except Exception as e:
+
+        output_text = f"""
+        Error generating output:
+
+        {str(e)}
+        """
 
     return (
-        response.text,
+        output_text,
         related_images
     )
 
@@ -758,9 +906,11 @@ Examples:
             "Generating Output..."
         ):
 
-            output, images = generate_output(
-                team,
-                additional_instruction
+            output, images = (
+                generate_output(
+                    team,
+                    additional_instruction
+                )
             )
 
         st.subheader(
@@ -795,5 +945,5 @@ Examples:
 st.divider()
 
 st.caption(
-    "MVP | AI Implementation Enablement Assistant"
+    "Stable MVP | AI Implementation Enablement Assistant"
 )

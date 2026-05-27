@@ -1,6 +1,6 @@
 # =========================================================
 # AI IMPLEMENTATION ENABLEMENT ASSISTANT
-# SCREENSHOT-AWARE MVP
+# FINAL STABLE SCREENSHOT-AWARE MVP
 # =========================================================
 
 import streamlit as st
@@ -33,7 +33,7 @@ st.title(
 )
 
 st.caption(
-    "Generate Functional, Technical & Support enablement outputs"
+    "Generate Functional, Technical & Support outputs from implementation artifacts"
 )
 
 # =========================================================
@@ -159,21 +159,30 @@ def extract_pdf_content(
 
                         f.write(image_bytes)
 
-                    page_images.append(
+                    if os.path.exists(
                         image_path
-                    )
+                    ):
 
-                except:
-                    pass
+                        page_images.append(
+                            image_path
+                        )
+
+                except Exception as e:
+
+                    print(e)
 
             pages_data.append({
+
                 "text": page_text,
+
                 "images": page_images,
+
                 "source_file": file_name
             })
 
-    except:
-        pass
+    except Exception as e:
+
+        print(e)
 
     return pages_data
 
@@ -201,7 +210,8 @@ def extract_docx_content(
 
         doc_images = []
 
-        rels = doc.part._rels
+        # RELATIONSHIP BASED EXTRACTION
+        rels = doc.part.rels
 
         for rel in rels:
 
@@ -231,21 +241,31 @@ def extract_docx_content(
 
                         f.write(image_data)
 
-                    doc_images.append(
+                    # VALIDATE IMAGE EXISTS
+                    if os.path.exists(
                         image_path
-                    )
+                    ):
 
-                except:
-                    pass
+                        doc_images.append(
+                            image_path
+                        )
+
+                except Exception as e:
+
+                    print(e)
 
         sections.append({
+
             "text": text,
+
             "images": doc_images,
+
             "source_file": file_name
         })
 
-    except:
-        pass
+    except Exception as e:
+
+        print(e)
 
     return sections
 
@@ -278,6 +298,7 @@ def extract_pptx_content(
                         shape.text + "\n"
                     )
 
+                # IMAGE SHAPE
                 if shape.shape_type == 13:
 
                     try:
@@ -308,21 +329,30 @@ def extract_pptx_content(
 
                             f.write(image_bytes)
 
-                        slide_images.append(
+                        if os.path.exists(
                             image_path
-                        )
+                        ):
 
-                    except:
-                        pass
+                            slide_images.append(
+                                image_path
+                            )
+
+                    except Exception as e:
+
+                        print(e)
 
             slides_data.append({
+
                 "text": slide_text,
+
                 "images": slide_images,
+
                 "source_file": file_name
             })
 
-    except:
-        pass
+    except Exception as e:
+
+        print(e)
 
     return slides_data
 
@@ -348,13 +378,17 @@ def extract_txt_content(
             text = f.read()
 
         sections.append({
+
             "text": text,
+
             "images": [],
+
             "source_file": file_name
         })
 
-    except:
-        pass
+    except Exception as e:
+
+        print(e)
 
     return sections
 
@@ -450,7 +484,9 @@ def get_embedding(text):
 
         return embedding
 
-    except:
+    except Exception as e:
+
+        print(e)
 
         return np.zeros(384)
 
@@ -523,6 +559,7 @@ def retrieve_chunks(
         for idx in indices[0]:
 
             retrieved.append({
+
                 "chunk":
                     st.session_state.chunks[idx],
 
@@ -532,7 +569,9 @@ def retrieve_chunks(
 
         return retrieved
 
-    except:
+    except Exception as e:
+
+        print(e)
 
         return []
 
@@ -656,15 +695,21 @@ def generate_output(
                 item["metadata"]["images"]
             ):
 
-                related_images.append(img)
+                # IMAGE EXISTS CHECK
+                if os.path.exists(img):
+
+                    related_images.append(
+                        img
+                    )
+
+    # REMOVE DUPLICATES
+    related_images = list(
+        set(related_images)
+    )[:5]
 
     context = context[
         :MAX_CONTEXT_LENGTH
     ]
-
-    related_images = list(
-        set(related_images)
-    )[:5]
 
     prompt = build_prompt(
         team,
@@ -674,6 +719,7 @@ def generate_output(
 
     try:
 
+        # USING GEMINI 2.5 FLASH
         model = genai.GenerativeModel(
             "gemini-2.5-flash"
         )
@@ -752,6 +798,17 @@ if uploaded_files:
                     section["images"]
                 )
 
+                # DEBUGGING
+                st.write(
+                    f"Images extracted: {len(images)}"
+                )
+
+                if images:
+
+                    st.success(
+                        f"{len(images)} screenshots extracted from {file.name}"
+                    )
+
                 if not text.strip():
 
                     continue
@@ -763,10 +820,6 @@ if uploaded_files:
                 ):
 
                     all_chunks.append(chunk)
-
-                    # IMPORTANT:
-                    # IMAGES STORED INSIDE
-                    # CHUNK METADATA
 
                     all_metadata.append({
 
@@ -865,13 +918,17 @@ Examples:
         st.markdown(output)
 
         # =====================================================
-        # INLINE SCREENSHOTS
+        # SCREENSHOTS
         # =====================================================
 
         if images:
 
             st.subheader(
                 "Relevant Screenshots"
+            )
+
+            st.write(
+                f"Displaying {len(images)} screenshots"
             )
 
             for img in images:
@@ -883,8 +940,17 @@ Examples:
                         use_container_width=True
                     )
 
-                except:
-                    pass
+                except Exception as e:
+
+                    st.warning(
+                        f"Failed loading image: {e}"
+                    )
+
+        else:
+
+            st.warning(
+                "No screenshots retrieved"
+            )
 
 # =========================================================
 # FOOTER
@@ -893,5 +959,5 @@ Examples:
 st.divider()
 
 st.caption(
-    "Stable Screenshot-Aware MVP"
+    "Final Stable Screenshot-Aware MVP"
 )

@@ -1,6 +1,6 @@
 # =========================================================
 # AI IMPLEMENTATION ENABLEMENT ASSISTANT
-# STABLE MVP VERSION
+# SCREENSHOT-AWARE MVP
 # =========================================================
 
 import streamlit as st
@@ -33,7 +33,7 @@ st.title(
 )
 
 st.caption(
-    "Upload implementation artifacts and generate team-specific enablement outputs"
+    "Generate Functional, Technical & Support enablement outputs"
 )
 
 # =========================================================
@@ -78,11 +78,9 @@ os.makedirs(
 @st.cache_resource
 def load_embedding_model():
 
-    model = SentenceTransformer(
+    return SentenceTransformer(
         "all-MiniLM-L6-v2"
     )
-
-    return model
 
 embedding_model = load_embedding_model()
 
@@ -99,9 +97,6 @@ if "chunks" not in st.session_state:
 if "metadata" not in st.session_state:
     st.session_state.metadata = []
 
-if "images" not in st.session_state:
-    st.session_state.images = []
-
 if "processed" not in st.session_state:
     st.session_state.processed = False
 
@@ -114,19 +109,17 @@ def extract_pdf_content(
     file_name
 ):
 
-    text = ""
-
-    extracted_images = []
+    pages_data = []
 
     try:
 
         doc = fitz.open(file_path)
 
-        for page in doc:
+        for page_no, page in enumerate(doc):
 
             page_text = page.get_text()
 
-            text += page_text + "\n"
+            page_images = []
 
             image_list = page.get_images(
                 full=True
@@ -166,20 +159,23 @@ def extract_pdf_content(
 
                         f.write(image_bytes)
 
-                    extracted_images.append({
-                        "image_path": image_path,
-                        "source_file": file_name,
-                        "related_text":
-                            page_text[:500]
-                    })
+                    page_images.append(
+                        image_path
+                    )
 
                 except:
                     pass
 
+            pages_data.append({
+                "text": page_text,
+                "images": page_images,
+                "source_file": file_name
+            })
+
     except:
         pass
 
-    return text, extracted_images
+    return pages_data
 
 # =========================================================
 # DOCX EXTRACTION
@@ -190,9 +186,7 @@ def extract_docx_content(
     file_name
 ):
 
-    text = ""
-
-    extracted_images = []
+    sections = []
 
     try:
 
@@ -204,6 +198,8 @@ def extract_docx_content(
                 for para in doc.paragraphs
             ]
         )
+
+        doc_images = []
 
         rels = doc.part._rels
 
@@ -235,23 +231,26 @@ def extract_docx_content(
 
                         f.write(image_data)
 
-                    extracted_images.append({
-                        "image_path": image_path,
-                        "source_file": file_name,
-                        "related_text":
-                            text[:500]
-                    })
+                    doc_images.append(
+                        image_path
+                    )
 
                 except:
                     pass
 
+        sections.append({
+            "text": text,
+            "images": doc_images,
+            "source_file": file_name
+        })
+
     except:
         pass
 
-    return text, extracted_images
+    return sections
 
 # =========================================================
-# PPTX EXTRACTION
+# PPT EXTRACTION
 # =========================================================
 
 def extract_pptx_content(
@@ -259,9 +258,7 @@ def extract_pptx_content(
     file_name
 ):
 
-    text = ""
-
-    extracted_images = []
+    slides_data = []
 
     try:
 
@@ -271,6 +268,8 @@ def extract_pptx_content(
 
             slide_text = ""
 
+            slide_images = []
+
             for shape in slide.shapes:
 
                 if hasattr(shape, "text"):
@@ -279,16 +278,19 @@ def extract_pptx_content(
                         shape.text + "\n"
                     )
 
-                # Picture shape
                 if shape.shape_type == 13:
 
                     try:
 
                         image = shape.image
 
-                        image_bytes = image.blob
+                        image_bytes = (
+                            image.blob
+                        )
 
-                        image_ext = image.ext
+                        image_ext = (
+                            image.ext
+                        )
 
                         image_name = (
                             f"{uuid.uuid4()}.{image_ext}"
@@ -306,34 +308,34 @@ def extract_pptx_content(
 
                             f.write(image_bytes)
 
-                        extracted_images.append({
-                            "image_path":
-                                image_path,
-
-                            "source_file":
-                                file_name,
-
-                            "related_text":
-                                slide_text[:500]
-                        })
+                        slide_images.append(
+                            image_path
+                        )
 
                     except:
                         pass
 
-            text += slide_text + "\n"
+            slides_data.append({
+                "text": slide_text,
+                "images": slide_images,
+                "source_file": file_name
+            })
 
     except:
         pass
 
-    return text, extracted_images
+    return slides_data
 
 # =========================================================
 # TXT EXTRACTION
 # =========================================================
 
 def extract_txt_content(
-    file_path
+    file_path,
+    file_name
 ):
+
+    sections = []
 
     try:
 
@@ -345,11 +347,16 @@ def extract_txt_content(
 
             text = f.read()
 
-        return text, []
+        sections.append({
+            "text": text,
+            "images": [],
+            "source_file": file_name
+        })
 
     except:
+        pass
 
-        return "", []
+    return sections
 
 # =========================================================
 # GENERIC EXTRACTION
@@ -378,49 +385,41 @@ def extract_content(uploaded_file):
 
         if suffix == "pdf":
 
-            text, images = (
-                extract_pdf_content(
-                    temp_path,
-                    uploaded_file.name
-                )
+            data = extract_pdf_content(
+                temp_path,
+                uploaded_file.name
             )
 
         elif suffix == "docx":
 
-            text, images = (
-                extract_docx_content(
-                    temp_path,
-                    uploaded_file.name
-                )
+            data = extract_docx_content(
+                temp_path,
+                uploaded_file.name
             )
 
         elif suffix == "pptx":
 
-            text, images = (
-                extract_pptx_content(
-                    temp_path,
-                    uploaded_file.name
-                )
+            data = extract_pptx_content(
+                temp_path,
+                uploaded_file.name
             )
 
         elif suffix == "txt":
 
-            text, images = (
-                extract_txt_content(
-                    temp_path
-                )
+            data = extract_txt_content(
+                temp_path,
+                uploaded_file.name
             )
 
         else:
 
-            text = ""
-            images = []
+            data = []
 
     finally:
 
         os.unlink(temp_path)
 
-    return text, images
+    return data
 
 # =========================================================
 # CHUNKING
@@ -433,9 +432,7 @@ def chunk_text(text):
         chunk_overlap=100
     )
 
-    chunks = splitter.split_text(text)
-
-    return chunks
+    return splitter.split_text(text)
 
 # =========================================================
 # EMBEDDINGS
@@ -473,7 +470,9 @@ def create_vector_store(chunks):
 
         embedding = get_embedding(chunk)
 
-        embeddings.append(embedding)
+        embeddings.append(
+            embedding
+        )
 
         progress_bar.progress(
             (idx + 1) / total_chunks
@@ -538,69 +537,6 @@ def retrieve_chunks(
         return []
 
 # =========================================================
-# IMAGE RETRIEVAL
-# =========================================================
-
-def retrieve_related_images(
-    retrieved_chunks
-):
-
-    matched_images = []
-
-    try:
-
-        for chunk in retrieved_chunks:
-
-            chunk_text = (
-                chunk["chunk"].lower()
-            )
-
-            chunk_words = (
-                chunk_text.split()[:15]
-            )
-
-            for image_data in (
-                st.session_state.images
-            ):
-
-                related_text = (
-                    image_data["related_text"]
-                    .lower()
-                )
-
-                if any(
-                    word in related_text
-                    for word in chunk_words
-                ):
-
-                    matched_images.append(
-                        image_data
-                    )
-
-        unique_images = []
-
-        seen = set()
-
-        for img in matched_images:
-
-            if (
-                img["image_path"]
-                not in seen
-            ):
-
-                unique_images.append(img)
-
-                seen.add(
-                    img["image_path"]
-                )
-
-        return unique_images[:3]
-
-    except:
-
-        return []
-
-# =========================================================
 # PROMPT BUILDER
 # =========================================================
 
@@ -613,41 +549,33 @@ def build_prompt(
     if team == "Functional Team":
 
         instructions = """
-        Generate a functional enablement document.
-
-        Include:
+        Generate:
         - business flow
         - process explanation
         - validations
-        - dependencies
         - configurations
-        - assumptions
+        - dependencies
         """
 
     elif team == "Technical Team":
 
         instructions = """
-        Generate a technical analysis document.
-
-        Include:
-        - impacted modules
+        Generate:
+        - technical impact
         - integrations
-        - technical dependencies
         - customization points
+        - dependencies
         - validations
         """
 
     else:
 
         instructions = """
-        Generate a support readiness document.
-
-        Include:
-        - troubleshooting guidance
+        Generate:
+        - troubleshooting
         - FAQs
         - issue scenarios
-        - checkpoints
-        - limitations
+        - support guidance
         """
 
     prompt = f"""
@@ -670,7 +598,6 @@ def build_prompt(
     - Do not hallucinate
     - Keep concise
     - Use structured formatting
-    - Mention assumptions if needed
     """
 
     return prompt
@@ -704,6 +631,8 @@ def generate_output(
 
     context = ""
 
+    related_images = []
+
     for item in retrieved_chunks:
 
         context += f"""
@@ -717,19 +646,30 @@ def generate_output(
         --------------------------------
         """
 
-    # VERY IMPORTANT
-    context = context[:MAX_CONTEXT_LENGTH]
+        # DIRECT IMAGE RETRIEVAL
+        if (
+            "images"
+            in item["metadata"]
+        ):
+
+            for img in (
+                item["metadata"]["images"]
+            ):
+
+                related_images.append(img)
+
+    context = context[
+        :MAX_CONTEXT_LENGTH
+    ]
+
+    related_images = list(
+        set(related_images)
+    )[:5]
 
     prompt = build_prompt(
         team,
         context,
         additional_instruction
-    )
-
-    related_images = (
-        retrieve_related_images(
-            retrieved_chunks
-        )
     )
 
     try:
@@ -789,7 +729,6 @@ if uploaded_files:
 
         all_chunks = []
         all_metadata = []
-        all_images = []
 
         st.subheader(
             "Processing Files..."
@@ -801,39 +740,50 @@ if uploaded_files:
                 f"Reading: {file.name}"
             )
 
-            extracted_text, extracted_images = (
+            extracted_sections = (
                 extract_content(file)
             )
 
-            all_images.extend(
-                extracted_images
-            )
+            for section in extracted_sections:
 
-            if not extracted_text.strip():
+                text = section["text"]
 
-                st.warning(
-                    f"No readable text found in {file.name}"
+                images = (
+                    section["images"]
                 )
 
-                continue
+                if not text.strip():
 
-            chunks = chunk_text(
-                extracted_text
-            )
+                    continue
 
-            for idx, chunk in enumerate(chunks):
+                chunks = chunk_text(text)
 
-                all_chunks.append(chunk)
+                for idx, chunk in enumerate(
+                    chunks
+                ):
 
-                all_metadata.append({
-                    "file_name": file.name,
-                    "chunk_id": idx
-                })
+                    all_chunks.append(chunk)
+
+                    # IMPORTANT:
+                    # IMAGES STORED INSIDE
+                    # CHUNK METADATA
+
+                    all_metadata.append({
+
+                        "file_name":
+                            section["source_file"],
+
+                        "chunk_id":
+                            idx,
+
+                        "images":
+                            images
+                    })
 
         if len(all_chunks) == 0:
 
             st.error(
-                "No valid content extracted"
+                "No readable content found"
             )
 
             st.stop()
@@ -856,10 +806,6 @@ if uploaded_files:
 
         st.session_state.metadata = (
             all_metadata
-        )
-
-        st.session_state.images = (
-            all_images
         )
 
         st.session_state.processed = True
@@ -888,13 +834,12 @@ if st.session_state.processed:
     )
 
     additional_instruction = st.text_area(
-        "Additional Instructions (Optional)",
+        "Additional Instructions",
         placeholder="""
 Examples:
 - Focus on approval workflow
-- Include troubleshooting
 - Explain integrations
-- Keep concise
+- Include troubleshooting
         """
     )
 
@@ -919,6 +864,10 @@ Examples:
 
         st.markdown(output)
 
+        # =====================================================
+        # INLINE SCREENSHOTS
+        # =====================================================
+
         if images:
 
             st.subheader(
@@ -930,8 +879,7 @@ Examples:
                 try:
 
                     st.image(
-                        img["image_path"],
-                        caption=img["source_file"],
+                        img,
                         use_container_width=True
                     )
 
@@ -945,5 +893,5 @@ Examples:
 st.divider()
 
 st.caption(
-    "Stable MVP | AI Implementation Enablement Assistant"
+    "Stable Screenshot-Aware MVP"
 )

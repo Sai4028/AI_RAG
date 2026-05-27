@@ -476,11 +476,11 @@ def get_embedding(text):
 
     try:
 
+        model = load_embedding_model()
+
         text = text[:3000]
 
-        embedding = (
-            embedding_model.encode(text)
-        )
+        embedding = model.encode(text)
 
         return embedding
 

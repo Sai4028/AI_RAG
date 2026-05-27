@@ -1,5 +1,5 @@
 # =========================================================
-# AI GTM RAG MVP - PHASE 1
+# AI IMPLEMENTATION ENABLEMENT ASSISTANT
 # Streamlit + Gemini + FAISS + SentenceTransformers
 # =========================================================
 
@@ -7,10 +7,12 @@ import streamlit as st
 import google.generativeai as genai
 import tempfile
 import os
+import uuid
 import numpy as np
 import faiss
 import fitz
 
+from PIL import Image
 from docx import Document
 from pptx import Presentation
 
@@ -27,11 +29,17 @@ from sentence_transformers import (
 # =========================================================
 
 st.set_page_config(
-    page_title="AI GTM RAG MVP",
+    page_title="AI Implementation Enablement Assistant",
     layout="wide"
 )
 
-st.title("AI GTM RAG MVP")
+st.title(
+    "AI Implementation Enablement Assistant"
+)
+
+st.caption(
+    "Upload implementation artifacts and generate role-specific enablement outputs"
+)
 
 # =========================================================
 # SIDEBAR
@@ -46,6 +54,17 @@ gemini_api_key = st.sidebar.text_input(
 
 if gemini_api_key:
     genai.configure(api_key=gemini_api_key)
+
+# =========================================================
+# IMAGE STORAGE
+# =========================================================
+
+IMAGE_DIR = "extracted_images"
+
+os.makedirs(
+    IMAGE_DIR,
+    exist_ok=True
+)
 
 # =========================================================
 # LOAD EMBEDDING MODEL
@@ -75,29 +94,72 @@ if "chunks" not in st.session_state:
 if "metadata" not in st.session_state:
     st.session_state.metadata = []
 
+if "images" not in st.session_state:
+    st.session_state.images = []
+
 if "processed" not in st.session_state:
     st.session_state.processed = False
 
 # =========================================================
-# PDF EXTRACTION
+# PDF TEXT + IMAGE EXTRACTION
 # =========================================================
 
-def extract_pdf_text(file_path):
+def extract_pdf_content(file_path, file_name):
 
     text = ""
 
+    extracted_images = []
+
     doc = fitz.open(file_path)
 
-    for page in doc:
-        text += page.get_text()
+    for page_index, page in enumerate(doc):
 
-    return text
+        page_text = page.get_text()
+
+        text += page_text + "\n"
+
+        image_list = page.get_images(full=True)
+
+        for img_index, img in enumerate(image_list):
+
+            try:
+
+                xref = img[0]
+
+                base_image = doc.extract_image(xref)
+
+                image_bytes = base_image["image"]
+
+                image_ext = base_image["ext"]
+
+                image_name = (
+                    f"{uuid.uuid4()}.{image_ext}"
+                )
+
+                image_path = os.path.join(
+                    IMAGE_DIR,
+                    image_name
+                )
+
+                with open(image_path, "wb") as f:
+                    f.write(image_bytes)
+
+                extracted_images.append({
+                    "image_path": image_path,
+                    "source_file": file_name,
+                    "related_text": page_text[:1000]
+                })
+
+            except:
+                pass
+
+    return text, extracted_images
 
 # =========================================================
-# DOCX EXTRACTION
+# DOCX TEXT + IMAGE EXTRACTION
 # =========================================================
 
-def extract_docx_text(file_path):
+def extract_docx_content(file_path, file_name):
 
     doc = Document(file_path)
 
@@ -105,34 +167,127 @@ def extract_docx_text(file_path):
         [para.text for para in doc.paragraphs]
     )
 
-    return text
+    extracted_images = []
+
+    rels = doc.part._rels
+
+    for rel in rels:
+
+        rel_obj = rels[rel]
+
+        if "image" in rel_obj.target_ref:
+
+            try:
+
+                image_data = rel_obj.target_part.blob
+
+                image_name = (
+                    f"{uuid.uuid4()}.png"
+                )
+
+                image_path = os.path.join(
+                    IMAGE_DIR,
+                    image_name
+                )
+
+                with open(image_path, "wb") as f:
+                    f.write(image_data)
+
+                extracted_images.append({
+                    "image_path": image_path,
+                    "source_file": file_name,
+                    "related_text": text[:1000]
+                })
+
+            except:
+                pass
+
+    return text, extracted_images
 
 # =========================================================
-# PPTX EXTRACTION
+# PPT TEXT + IMAGE EXTRACTION
 # =========================================================
 
-def extract_pptx_text(file_path):
+def extract_pptx_content(file_path, file_name):
 
     prs = Presentation(file_path)
 
     text = ""
 
-    for slide in prs.slides:
+    extracted_images = []
+
+    for slide_index, slide in enumerate(prs.slides):
+
+        slide_text = ""
 
         for shape in slide.shapes:
 
             if hasattr(shape, "text"):
-                text += shape.text + "\n"
 
-    return text
+                slide_text += shape.text + "\n"
+
+            if shape.shape_type == 13:
+
+                try:
+
+                    image = shape.image
+
+                    image_bytes = image.blob
+
+                    image_ext = image.ext
+
+                    image_name = (
+                        f"{uuid.uuid4()}.{image_ext}"
+                    )
+
+                    image_path = os.path.join(
+                        IMAGE_DIR,
+                        image_name
+                    )
+
+                    with open(image_path, "wb") as f:
+                        f.write(image_bytes)
+
+                    extracted_images.append({
+                        "image_path": image_path,
+                        "source_file": file_name,
+                        "related_text": slide_text[:1000]
+                    })
+
+                except:
+                    pass
+
+        text += slide_text + "\n"
+
+    return text, extracted_images
 
 # =========================================================
-# GENERIC FILE EXTRACTION
+# TXT EXTRACTION
 # =========================================================
 
-def extract_text(uploaded_file):
+def extract_txt_content(file_path):
 
-    suffix = uploaded_file.name.split(".")[-1].lower()
+    with open(
+        file_path,
+        "r",
+        encoding="utf-8"
+    ) as f:
+
+        text = f.read()
+
+    return text, []
+
+# =========================================================
+# GENERIC EXTRACTION
+# =========================================================
+
+def extract_content(uploaded_file):
+
+    suffix = (
+        uploaded_file.name
+        .split(".")[-1]
+        .lower()
+    )
 
     with tempfile.NamedTemporaryFile(
         delete=False,
@@ -146,32 +301,42 @@ def extract_text(uploaded_file):
     try:
 
         if suffix == "pdf":
-            text = extract_pdf_text(temp_path)
+
+            text, images = extract_pdf_content(
+                temp_path,
+                uploaded_file.name
+            )
 
         elif suffix == "docx":
-            text = extract_docx_text(temp_path)
+
+            text, images = extract_docx_content(
+                temp_path,
+                uploaded_file.name
+            )
 
         elif suffix == "pptx":
-            text = extract_pptx_text(temp_path)
+
+            text, images = extract_pptx_content(
+                temp_path,
+                uploaded_file.name
+            )
 
         elif suffix == "txt":
 
-            with open(
-                temp_path,
-                "r",
-                encoding="utf-8"
-            ) as f:
-
-                text = f.read()
+            text, images = extract_txt_content(
+                temp_path
+            )
 
         else:
+
             text = ""
+            images = []
 
     finally:
 
         os.unlink(temp_path)
 
-    return text
+    return text, images
 
 # =========================================================
 # CHUNKING
@@ -180,8 +345,8 @@ def extract_text(uploaded_file):
 def chunk_text(text):
 
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=200
+        chunk_size=1200,
+        chunk_overlap=250
     )
 
     chunks = splitter.split_text(text)
@@ -201,7 +366,7 @@ def get_embedding(text):
     return embedding
 
 # =========================================================
-# VECTOR STORE CREATION
+# VECTOR STORE
 # =========================================================
 
 def create_vector_store(chunks):
@@ -228,7 +393,9 @@ def create_vector_store(chunks):
 
     dimension = embeddings.shape[1]
 
-    index = faiss.IndexFlatL2(dimension)
+    index = faiss.IndexFlatL2(
+        dimension
+    )
 
     index.add(embeddings)
 
@@ -238,7 +405,7 @@ def create_vector_store(chunks):
 # RETRIEVAL
 # =========================================================
 
-def retrieve_chunks(query, top_k=5):
+def retrieve_chunks(query, top_k=6):
 
     query_embedding = get_embedding(query)
 
@@ -246,9 +413,11 @@ def retrieve_chunks(query, top_k=5):
         [query_embedding]
     ).astype("float32")
 
-    distances, indices = st.session_state.vector_store.search(
-        query_embedding,
-        top_k
+    distances, indices = (
+        st.session_state.vector_store.search(
+            query_embedding,
+            top_k
+        )
     )
 
     retrieved = []
@@ -256,23 +425,148 @@ def retrieve_chunks(query, top_k=5):
     for idx in indices[0]:
 
         retrieved.append({
-            "chunk": st.session_state.chunks[idx],
-            "metadata": st.session_state.metadata[idx]
+            "chunk":
+                st.session_state.chunks[idx],
+
+            "metadata":
+                st.session_state.metadata[idx]
         })
 
     return retrieved
 
 # =========================================================
-# GEMINI OUTPUT GENERATION
+# IMAGE RETRIEVAL
 # =========================================================
 
-def generate_output(role, output_type):
+def retrieve_related_images(retrieved_chunks):
+
+    matched_images = []
+
+    for chunk in retrieved_chunks:
+
+        chunk_text = (
+            chunk["chunk"].lower()
+        )
+
+        for image_data in st.session_state.images:
+
+            related_text = (
+                image_data["related_text"]
+                .lower()
+            )
+
+            if any(
+                word in related_text
+                for word in chunk_text.split()[:20]
+            ):
+
+                matched_images.append(
+                    image_data
+                )
+
+    unique_images = []
+
+    seen = set()
+
+    for img in matched_images:
+
+        if img["image_path"] not in seen:
+
+            unique_images.append(img)
+
+            seen.add(img["image_path"])
+
+    return unique_images[:5]
+
+# =========================================================
+# PROMPT GENERATION
+# =========================================================
+
+def build_prompt(team, context):
+
+    if team == "Functional Team":
+
+        instructions = """
+        Generate a functional enablement document.
+
+        Include:
+        - business flow
+        - process explanation
+        - validations
+        - dependencies
+        - configurations
+        - assumptions
+        - workflow guidance
+
+        Keep practical and implementation-focused.
+        """
+
+    elif team == "Technical Team":
+
+        instructions = """
+        Generate a technical analysis document.
+
+        Include:
+        - impacted modules
+        - technical dependencies
+        - integration considerations
+        - customization points
+        - validations
+        - technical assumptions
+
+        Keep implementation-focused.
+        """
+
+    else:
+
+        instructions = """
+        Generate a support readiness document.
+
+        Include:
+        - troubleshooting guidance
+        - FAQs
+        - issue scenarios
+        - support checkpoints
+        - known limitations
+        - validations
+
+        Keep practical for support teams.
+        """
+
+    prompt = f"""
+    You are an enterprise AI assistant.
+
+    TARGET TEAM:
+    {team}
+
+    CONTEXT:
+    {context}
+
+    INSTRUCTIONS:
+    {instructions}
+
+    RULES:
+    - Use only provided context
+    - Do not hallucinate
+    - Use structured formatting
+    - Mention assumptions where needed
+    - Keep concise and enterprise-ready
+    """
+
+    return prompt
+
+# =========================================================
+# GENERATE OUTPUT
+# =========================================================
+
+def generate_output(team, additional_instruction):
 
     retrieval_query = f"""
-    Enterprise implementation details for:
-    {role}
-    related to:
-    {output_type}
+    Enterprise implementation details
+    for {team}
+
+    Additional Context:
+    {additional_instruction}
     """
 
     retrieved_chunks = retrieve_chunks(
@@ -284,7 +578,8 @@ def generate_output(role, output_type):
     for item in retrieved_chunks:
 
         context += f"""
-        FILE: {item['metadata']['file_name']}
+        FILE:
+        {item['metadata']['file_name']}
 
         CONTENT:
         {item['chunk']}
@@ -292,26 +587,10 @@ def generate_output(role, output_type):
         -----------------------------------
         """
 
-    prompt = f"""
-    You are an enterprise AI assistant.
-
-    ROLE:
-    {role}
-
-    OUTPUT TYPE:
-    {output_type}
-
-    CONTEXT:
-    {context}
-
-    INSTRUCTIONS:
-    - Use only provided context
-    - Do not hallucinate
-    - Generate enterprise-ready output
-    - Use structured formatting
-    - Be practical and implementation-focused
-    - Mention assumptions if context is insufficient
-    """
+    prompt = build_prompt(
+        team,
+        context
+    )
 
     model = genai.GenerativeModel(
         "gemini-2.5-flash"
@@ -321,13 +600,22 @@ def generate_output(role, output_type):
         prompt
     )
 
-    return response.text
+    related_images = retrieve_related_images(
+        retrieved_chunks
+    )
+
+    return (
+        response.text,
+        related_images
+    )
 
 # =========================================================
 # SCREEN 1 - UPLOAD
 # =========================================================
 
-st.header("1. Upload Artifacts")
+st.header(
+    "1. Upload Implementation Artifacts"
+)
 
 uploaded_files = st.file_uploader(
     "Upload PDF / DOCX / PPTX / TXT",
@@ -353,8 +641,11 @@ if uploaded_files:
 
         all_chunks = []
         all_metadata = []
+        all_images = []
 
-        st.subheader("Processing Files")
+        st.subheader(
+            "Processing Files..."
+        )
 
         for file in uploaded_files:
 
@@ -362,7 +653,13 @@ if uploaded_files:
                 f"Reading: {file.name}"
             )
 
-            extracted_text = extract_text(file)
+            extracted_text, extracted_images = (
+                extract_content(file)
+            )
+
+            all_images.extend(
+                extracted_images
+            )
 
             if not extracted_text.strip():
 
@@ -394,7 +691,7 @@ if uploaded_files:
             st.stop()
 
         st.subheader(
-            "Creating Vector Store"
+            "Creating Knowledge Index..."
         )
 
         vector_store = create_vector_store(
@@ -413,100 +710,57 @@ if uploaded_files:
             all_metadata
         )
 
+        st.session_state.images = (
+            all_images
+        )
+
         st.session_state.processed = True
 
         st.success(
-            "Files Processed Successfully"
+            "Knowledge Processing Completed"
         )
 
 # =========================================================
-# SCREEN 2 - AI UNDERSTANDING
-# =========================================================
-
-if st.session_state.processed:
-
-    st.header("2. AI Understanding")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-
-        st.metric(
-            "Total Chunks",
-            len(st.session_state.chunks)
-        )
-
-    with col2:
-
-        st.metric(
-            "Documents Processed",
-            len(uploaded_files)
-        )
-
-    with st.expander(
-        "View Sample Chunks"
-    ):
-
-        for idx, chunk in enumerate(
-            st.session_state.chunks[:5]
-        ):
-
-            st.markdown(
-                f"### Chunk {idx + 1}"
-            )
-
-            st.write(
-                chunk[:1000]
-            )
-
-# =========================================================
-# SCREEN 3 - ROLE BASED OUTPUTS
+# SCREEN 2 - GENERATE OUTPUT
 # =========================================================
 
 if st.session_state.processed:
 
     st.header(
-        "3. Role-Based Output Generation"
+        "2. Generate Team-Specific Output"
     )
 
-    col1, col2 = st.columns(2)
+    team = st.selectbox(
+        "Generate For",
+        [
+            "Functional Team",
+            "Technical Team",
+            "Support Team"
+        ]
+    )
 
-    with col1:
-
-        role = st.selectbox(
-            "Select Role",
-            [
-                "Functional Team",
-                "Technical Team",
-                "Support Team"
-            ]
-        )
-
-    with col2:
-
-        output_type = st.selectbox(
-            "Select Output Type",
-            [
-                "SOP",
-                "Release Notes",
-                "FAQ",
-                "Training Guide",
-                "Technical Summary",
-                "Troubleshooting Guide"
-            ]
-        )
+    additional_instruction = st.text_area(
+        "Additional Instructions (Optional)",
+        placeholder="""
+Examples:
+- Focus on approval workflow
+- Include troubleshooting
+- Explain integrations
+- Keep concise
+        """
+    )
 
     if st.button(
         "Generate Output"
     ):
 
         with st.spinner(
-            "Generating AI Output..."
+            "Generating Output..."
         ):
 
-            output = generate_output(
-                role,
-                output_type
+            output, images = generate_output(
+                team,
+                additional_instruction
             )
 
         st.subheader(
@@ -515,6 +769,25 @@ if st.session_state.processed:
 
         st.markdown(output)
 
+        if images:
+
+            st.subheader(
+                "Relevant Screenshots"
+            )
+
+            for img in images:
+
+                try:
+
+                    st.image(
+                        img["image_path"],
+                        caption=img["source_file"],
+                        use_container_width=True
+                    )
+
+                except:
+                    pass
+
 # =========================================================
 # FOOTER
 # =========================================================
@@ -522,5 +795,5 @@ if st.session_state.processed:
 st.divider()
 
 st.caption(
-    "Phase-1 MVP | Streamlit + Gemini + FAISS + SentenceTransformers"
+    "MVP | AI Implementation Enablement Assistant"
 )

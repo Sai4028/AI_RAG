@@ -6,4 +6,5 @@ pymupdf
 python-docx
 python-pptx
 langchain-text-splitters
-scikit-learn
+sentence-transformers
+torch

@@ -488,10 +488,13 @@ ROLE_RETRIEVAL_QUERIES = {
 }
 
 def generate_output(
-    retrieval_query = ROLE_RETRIEVAL_QUERIES[team]
-    retrieval_query += additional_instruction
+    team,
+    additional_instruction
 ):
 
+    retrieval_query = ROLE_RETRIEVAL_QUERIES[team]
+
+    retrieval_query += additional_instruction
 
     retrieved_chunks = retrieve_chunks(
         retrieval_query
@@ -557,7 +560,7 @@ def generate_output(
     try:
 
         model = genai.GenerativeModel(
-            "gemini-2.5-flash"
+            "gemini-1.5-flash"
         )
 
         response = model.generate_content(
@@ -576,7 +579,6 @@ def generate_output(
         output_text,
         related_images
     )
-
 # =========================================================
 # UPLOAD SCREEN
 # =========================================================

@@ -540,32 +540,32 @@ def generate_output(
 
     if team == "Functional Team":
 
-    prompt = f"""
-    You are a Functional Consultant.
-
-    CONTEXT:
-    {context}
-
-    TASK:
-    Generate a business-oriented implementation summary.
-
-    FORMAT:
-    # Business Overview
-    # User Workflow
-    # Configurations
-    # Validation Rules
-    # Business Impact
-    # Key User Actions
-
-    STYLE:
-    - Business friendly
-    - Process oriented
-    - Functional language only
-    - Avoid deep technical jargon
-
-    ADDITIONAL INSTRUCTIONS:
-    {additional_instruction}
-    """
+        prompt = f"""
+        You are a Functional Consultant.
+    
+        CONTEXT:
+        {context}
+    
+        TASK:
+        Generate a business-oriented implementation summary.
+    
+        FORMAT:
+        # Business Overview
+        # User Workflow
+        # Configurations
+        # Validation Rules
+        # Business Impact
+        # Key User Actions
+    
+        STYLE:
+        - Business friendly
+        - Process oriented
+        - Functional language only
+        - Avoid deep technical jargon
+    
+        ADDITIONAL INSTRUCTIONS:
+        {additional_instruction}
+        """
 
 elif team == "Technical Team":
 

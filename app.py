@@ -449,17 +449,49 @@ def retrieve_chunks(
 # GENERATE OUTPUT
 # =========================================================
 
+ROLE_RETRIEVAL_QUERIES = {
+
+    "Functional Team": """
+    business workflow
+    process flow
+    approval process
+    user actions
+    validations
+    configurations
+    business rules
+    end user impact
+    """,
+
+    "Technical Team": """
+    APIs
+    backend logic
+    database changes
+    integrations
+    deployment
+    scheduler
+    dependencies
+    technical validations
+    performance
+    """,
+
+    "Support Team": """
+    troubleshooting
+    errors
+    failures
+    support cases
+    logs
+    retry mechanism
+    validation failures
+    escalation
+    issue resolution
+    """
+}
+
 def generate_output(
-    team,
-    additional_instruction
+    retrieval_query = ROLE_RETRIEVAL_QUERIES[team]
+    retrieval_query += additional_instruction
 ):
 
-    retrieval_query = f"""
-    Enterprise implementation details
-    for {team}
-
-    {additional_instruction}
-    """
 
     retrieved_chunks = retrieve_chunks(
         retrieval_query

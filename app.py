@@ -1,21 +1,15 @@
 # =========================================================
-# AI IMPLEMENTATION ENABLEMENT ASSISTANT
-# FINAL STABLE MVP
-# Streamlit + Gemini + FAISS + TFIDF
+# AI GTM RAG MVP - PHASE 1
+# Streamlit + Gemini + FAISS + SentenceTransformers
 # =========================================================
 
 import streamlit as st
 import google.generativeai as genai
 import tempfile
 import os
-import uuid
 import numpy as np
 import faiss
 import fitz
-
-from sklearn.feature_extraction.text import (
-    TfidfVectorizer
-)
 
 from docx import Document
 from pptx import Presentation
@@ -24,32 +18,23 @@ from langchain_text_splitters import (
     RecursiveCharacterTextSplitter
 )
 
+from sentence_transformers import (
+    SentenceTransformer
+)
+
 # =========================================================
 # PAGE CONFIG
 # =========================================================
 
 st.set_page_config(
-    page_title="AI Implementation Enablement Assistant",
+    page_title="AI GTM RAG MVP",
     layout="wide"
 )
 
-st.title(
-    "AI Implementation Enablement Assistant"
-)
-
-st.caption(
-    "Generate Functional, Technical & Support outputs from implementation artifacts"
-)
+st.title("AI GTM RAG MVP")
 
 # =========================================================
-# CONFIG
-# =========================================================
-
-MAX_CONTEXT_LENGTH = 12000
-TOP_K_RESULTS = 3
-
-# =========================================================
-# GEMINI CONFIG
+# SIDEBAR
 # =========================================================
 
 st.sidebar.header("Configuration")
@@ -60,21 +45,22 @@ gemini_api_key = st.sidebar.text_input(
 )
 
 if gemini_api_key:
+    genai.configure(api_key=gemini_api_key)
 
-    genai.configure(
-        api_key=gemini_api_key
+# =========================================================
+# LOAD EMBEDDING MODEL
+# =========================================================
+
+@st.cache_resource
+def load_embedding_model():
+
+    model = SentenceTransformer(
+        "all-MiniLM-L6-v2"
     )
 
-# =========================================================
-# IMAGE STORAGE
-# =========================================================
+    return model
 
-IMAGE_DIR = "extracted_images"
-
-os.makedirs(
-    IMAGE_DIR,
-    exist_ok=True
-)
+embedding_model = load_embedding_model()
 
 # =========================================================
 # SESSION STATE
@@ -92,278 +78,100 @@ if "metadata" not in st.session_state:
 if "processed" not in st.session_state:
     st.session_state.processed = False
 
-if "vectorizer" not in st.session_state:
-    st.session_state.vectorizer = None
-
 # =========================================================
 # PDF EXTRACTION
 # =========================================================
 
-def extract_pdf_content(
-    file_path,
-    file_name
-):
+def extract_pdf_text(file_path):
 
-    pages_data = []
+    text = ""
 
     doc = fitz.open(file_path)
 
     for page in doc:
+        text += page.get_text()
 
-        page_text = page.get_text()
-
-        page_images = []
-
-        image_list = page.get_images(
-            full=True
-        )
-
-        for img in image_list:
-
-            try:
-
-                xref = img[0]
-
-                base_image = (
-                    doc.extract_image(xref)
-                )
-
-                image_bytes = (
-                    base_image["image"]
-                )
-
-                image_ext = (
-                    base_image["ext"]
-                )
-
-                image_name = (
-                    f"{uuid.uuid4()}.{image_ext}"
-                )
-
-                image_path = os.path.join(
-                    IMAGE_DIR,
-                    image_name
-                )
-
-                with open(
-                    image_path,
-                    "wb"
-                ) as f:
-
-                    f.write(image_bytes)
-
-                page_images.append(
-                    image_path
-                )
-
-            except:
-                pass
-
-        pages_data.append({
-
-            "text": page_text,
-
-            "images": page_images,
-
-            "source_file": file_name
-        })
-
-    return pages_data
+    return text
 
 # =========================================================
 # DOCX EXTRACTION
 # =========================================================
 
-def extract_docx_content(
-    file_path,
-    file_name
-):
-
-    sections = []
+def extract_docx_text(file_path):
 
     doc = Document(file_path)
 
     text = "\n".join(
-        [
-            para.text
-            for para in doc.paragraphs
-        ]
+        [para.text for para in doc.paragraphs]
     )
 
-    sections.append({
-
-        "text": text,
-
-        "images": [],
-
-        "source_file": file_name
-    })
-
-    return sections
+    return text
 
 # =========================================================
 # PPTX EXTRACTION
 # =========================================================
 
-def extract_pptx_content(
-    file_path,
-    file_name
-):
-
-    slides_data = []
+def extract_pptx_text(file_path):
 
     prs = Presentation(file_path)
 
+    text = ""
+
     for slide in prs.slides:
-
-        slide_text = ""
-
-        slide_images = []
 
         for shape in slide.shapes:
 
             if hasattr(shape, "text"):
+                text += shape.text + "\n"
 
-                slide_text += (
-                    shape.text + "\n"
-                )
-
-            if shape.shape_type == 13:
-
-                try:
-
-                    image = shape.image
-
-                    image_bytes = (
-                        image.blob
-                    )
-
-                    image_ext = (
-                        image.ext
-                    )
-
-                    image_name = (
-                        f"{uuid.uuid4()}.{image_ext}"
-                    )
-
-                    image_path = os.path.join(
-                        IMAGE_DIR,
-                        image_name
-                    )
-
-                    with open(
-                        image_path,
-                        "wb"
-                    ) as f:
-
-                        f.write(image_bytes)
-
-                    slide_images.append(
-                        image_path
-                    )
-
-                except:
-                    pass
-
-        slides_data.append({
-
-            "text": slide_text,
-
-            "images": slide_images,
-
-            "source_file": file_name
-        })
-
-    return slides_data
+    return text
 
 # =========================================================
-# TXT EXTRACTION
+# GENERIC FILE EXTRACTION
 # =========================================================
 
-def extract_txt_content(
-    file_path,
-    file_name
-):
+def extract_text(uploaded_file):
 
-    with open(
-        file_path,
-        "r",
-        encoding="utf-8"
-    ) as f:
-
-        text = f.read()
-
-    return [{
-
-        "text": text,
-
-        "images": [],
-
-        "source_file": file_name
-    }]
-
-# =========================================================
-# GENERIC EXTRACTION
-# =========================================================
-
-def extract_content(uploaded_file):
-
-    suffix = (
-        uploaded_file.name
-        .split(".")[-1]
-        .lower()
-    )
+    suffix = uploaded_file.name.split(".")[-1].lower()
 
     with tempfile.NamedTemporaryFile(
         delete=False,
         suffix=f".{suffix}"
     ) as tmp:
 
-        tmp.write(
-            uploaded_file.read()
-        )
+        tmp.write(uploaded_file.read())
 
         temp_path = tmp.name
 
     try:
 
         if suffix == "pdf":
-
-            data = extract_pdf_content(
-                temp_path,
-                uploaded_file.name
-            )
+            text = extract_pdf_text(temp_path)
 
         elif suffix == "docx":
-
-            data = extract_docx_content(
-                temp_path,
-                uploaded_file.name
-            )
+            text = extract_docx_text(temp_path)
 
         elif suffix == "pptx":
-
-            data = extract_pptx_content(
-                temp_path,
-                uploaded_file.name
-            )
+            text = extract_pptx_text(temp_path)
 
         elif suffix == "txt":
 
-            data = extract_txt_content(
+            with open(
                 temp_path,
-                uploaded_file.name
-            )
+                "r",
+                encoding="utf-8"
+            ) as f:
+
+                text = f.read()
 
         else:
-
-            data = []
+            text = ""
 
     finally:
 
         os.unlink(temp_path)
 
-    return data
+    return text
 
 # =========================================================
 # CHUNKING
@@ -372,23 +180,47 @@ def extract_content(uploaded_file):
 def chunk_text(text):
 
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=700,
-        chunk_overlap=100
+        chunk_size=1000,
+        chunk_overlap=200
     )
 
-    return splitter.split_text(text)
+    chunks = splitter.split_text(text)
+
+    return chunks
 
 # =========================================================
-# VECTOR STORE
+# EMBEDDINGS
+# =========================================================
+
+def get_embedding(text):
+
+    text = text[:8000]
+
+    embedding = embedding_model.encode(text)
+
+    return embedding
+
+# =========================================================
+# VECTOR STORE CREATION
 # =========================================================
 
 def create_vector_store(chunks):
 
-    vectorizer = TfidfVectorizer()
+    embeddings = []
 
-    embeddings = vectorizer.fit_transform(
-        chunks
-    ).toarray()
+    progress_bar = st.progress(0)
+
+    total_chunks = len(chunks)
+
+    for idx, chunk in enumerate(chunks):
+
+        embedding = get_embedding(chunk)
+
+        embeddings.append(embedding)
+
+        progress_bar.progress(
+            (idx + 1) / total_chunks
+        )
 
     embeddings = np.array(
         embeddings
@@ -396,38 +228,27 @@ def create_vector_store(chunks):
 
     dimension = embeddings.shape[1]
 
-    index = faiss.IndexFlatL2(
-        dimension
-    )
+    index = faiss.IndexFlatL2(dimension)
 
     index.add(embeddings)
 
-    return index, vectorizer
+    return index
 
 # =========================================================
 # RETRIEVAL
 # =========================================================
 
-def retrieve_chunks(
-    query,
-    top_k=TOP_K_RESULTS
-):
+def retrieve_chunks(query, top_k=5):
 
-    query_embedding = (
-        st.session_state.vectorizer
-        .transform([query])
-        .toarray()
-    )
+    query_embedding = get_embedding(query)
 
     query_embedding = np.array(
-        query_embedding
+        [query_embedding]
     ).astype("float32")
 
-    distances, indices = (
-        st.session_state.vector_store.search(
-            query_embedding,
-            top_k
-        )
+    distances, indices = st.session_state.vector_store.search(
+        query_embedding,
+        top_k
     )
 
     retrieved = []
@@ -435,225 +256,78 @@ def retrieve_chunks(
     for idx in indices[0]:
 
         retrieved.append({
-
-            "chunk":
-                st.session_state.chunks[idx],
-
-            "metadata":
-                st.session_state.metadata[idx]
+            "chunk": st.session_state.chunks[idx],
+            "metadata": st.session_state.metadata[idx]
         })
 
     return retrieved
 
 # =========================================================
-# GENERATE OUTPUT
+# GEMINI OUTPUT GENERATION
 # =========================================================
 
-ROLE_RETRIEVAL_QUERIES = {
+def generate_output(role, output_type):
 
-    "Functional Team": """
-    business workflow
-    process flow
-    approval process
-    user actions
-    validations
-    configurations
-    business rules
-    end user impact
-    """,
-
-    "Technical Team": """
-    APIs
-    backend logic
-    database changes
-    integrations
-    deployment
-    scheduler
-    dependencies
-    technical validations
-    performance
-    """,
-
-    "Support Team": """
-    troubleshooting
-    errors
-    failures
-    support cases
-    logs
-    retry mechanism
-    validation failures
-    escalation
-    issue resolution
+    retrieval_query = f"""
+    Enterprise implementation details for:
+    {role}
+    related to:
+    {output_type}
     """
-}
-
-def generate_output(
-    team,
-    additional_instruction
-):
-
-    retrieval_query = ROLE_RETRIEVAL_QUERIES[team]
-
-    retrieval_query += additional_instruction
 
     retrieved_chunks = retrieve_chunks(
         retrieval_query
     )
 
-    if len(retrieved_chunks) == 0:
-
-        return (
-            "No relevant content found.",
-            []
-        )
-
     context = ""
-
-    related_images = []
 
     for item in retrieved_chunks:
 
         context += f"""
-
-        FILE:
-        {item['metadata']['file_name']}
+        FILE: {item['metadata']['file_name']}
 
         CONTENT:
         {item['chunk']}
 
-        ------------------------------
+        -----------------------------------
         """
-
-        for img in item["metadata"]["images"]:
-
-            if os.path.exists(img):
-
-                related_images.append(img)
-
-    related_images = list(
-        set(related_images)
-    )[:5]
-
-    context = context[
-        :MAX_CONTEXT_LENGTH
-    ]
-
-    if team == "Functional Team":
-
-        prompt = f"""
-        You are a Functional Consultant.
-    
-        CONTEXT:
-        {context}
-    
-        TASK:
-        Generate a business-oriented implementation summary.
-    
-        FORMAT:
-        # Business Overview
-        # User Workflow
-        # Configurations
-        # Validation Rules
-        # Business Impact
-        # Key User Actions
-    
-        STYLE:
-        - Business friendly
-        - Process oriented
-        - Functional language only
-        - Avoid deep technical jargon
-    
-        ADDITIONAL INSTRUCTIONS:
-        {additional_instruction}
-        """
-
-elif team == "Technical Team":
 
     prompt = f"""
-    You are a Technical Architect.
+    You are an enterprise AI assistant.
+
+    ROLE:
+    {role}
+
+    OUTPUT TYPE:
+    {output_type}
 
     CONTEXT:
     {context}
 
-    TASK:
-    Generate a technical implementation summary.
-
-    FORMAT:
-    # Technical Overview
-    # APIs Impacted
-    # Database Changes
-    # Integrations
-    # Deployment Impact
-    # Dependencies
-    # Technical Risks
-
-    STYLE:
-    - Engineering focused
-    - Technical terminology
-    - Implementation oriented
-    - Mention system impacts
-
-    ADDITIONAL INSTRUCTIONS:
-    {additional_instruction}
+    INSTRUCTIONS:
+    - Use only provided context
+    - Do not hallucinate
+    - Generate enterprise-ready output
+    - Use structured formatting
+    - Be practical and implementation-focused
+    - Mention assumptions if context is insufficient
     """
 
-else:
-
-    prompt = f"""
-    You are a Support Engineer.
-
-    CONTEXT:
-    {context}
-
-    TASK:
-    Generate a support troubleshooting guide.
-
-    FORMAT:
-    # Common Issues
-    # Error Scenarios
-    # Troubleshooting Steps
-    # Logs to Check
-    # Retry Mechanism
-    # Escalation Guidance
-
-    STYLE:
-    - Operational
-    - Troubleshooting oriented
-    - Focus on issue handling
-    - Mention validations and failures
-
-    ADDITIONAL INSTRUCTIONS:
-    {additional_instruction}
-    """
-    try:
-
-        model = genai.GenerativeModel(
-            "gemini-2.5-flash"
-        )
-
-        response = model.generate_content(
-            prompt
-        )
-
-        output_text = response.text
-
-    except Exception as e:
-
-        output_text = (
-            f"Generation Error: {str(e)}"
-        )
-
-    return (
-        output_text,
-        related_images
+    model = genai.GenerativeModel(
+        "gemini-2.5-flash"
     )
+
+    response = model.generate_content(
+        prompt
+    )
+
+    return response.text
+
 # =========================================================
-# UPLOAD SCREEN
+# SCREEN 1 - UPLOAD
 # =========================================================
 
-st.header(
-    "1. Upload Implementation Artifacts"
-)
+st.header("1. Upload Artifacts")
 
 uploaded_files = st.file_uploader(
     "Upload PDF / DOCX / PPTX / TXT",
@@ -680,9 +354,7 @@ if uploaded_files:
         all_chunks = []
         all_metadata = []
 
-        st.subheader(
-            "Processing Files..."
-        )
+        st.subheader("Processing Files")
 
         for file in uploaded_files:
 
@@ -690,64 +362,47 @@ if uploaded_files:
                 f"Reading: {file.name}"
             )
 
-            extracted_sections = (
-                extract_content(file)
+            extracted_text = extract_text(file)
+
+            if not extracted_text.strip():
+
+                st.warning(
+                    f"No readable text found in {file.name}"
+                )
+
+                continue
+
+            chunks = chunk_text(
+                extracted_text
             )
 
-            for section in extracted_sections:
+            for idx, chunk in enumerate(chunks):
 
-                text = section["text"]
+                all_chunks.append(chunk)
 
-                images = section["images"]
-
-                if not text.strip():
-
-                    continue
-
-                chunks = chunk_text(text)
-
-                for idx, chunk in enumerate(
-                    chunks
-                ):
-
-                    all_chunks.append(chunk)
-
-                    all_metadata.append({
-
-                        "file_name":
-                            section["source_file"],
-
-                        "chunk_id":
-                            idx,
-
-                        "images":
-                            images
-                    })
+                all_metadata.append({
+                    "file_name": file.name,
+                    "chunk_id": idx
+                })
 
         if len(all_chunks) == 0:
 
             st.error(
-                "No readable content found"
+                "No valid content extracted"
             )
 
             st.stop()
 
         st.subheader(
-            "Creating Knowledge Index..."
+            "Creating Vector Store"
         )
 
-        vector_store, vectorizer = (
-            create_vector_store(
-                all_chunks
-            )
+        vector_store = create_vector_store(
+            all_chunks
         )
 
         st.session_state.vector_store = (
             vector_store
-        )
-
-        st.session_state.vectorizer = (
-            vectorizer
         )
 
         st.session_state.chunks = (
@@ -761,51 +416,97 @@ if uploaded_files:
         st.session_state.processed = True
 
         st.success(
-            "Knowledge Processing Completed"
+            "Files Processed Successfully"
         )
 
 # =========================================================
-# OUTPUT SCREEN
+# SCREEN 2 - AI UNDERSTANDING
+# =========================================================
+
+if st.session_state.processed:
+
+    st.header("2. AI Understanding")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+
+        st.metric(
+            "Total Chunks",
+            len(st.session_state.chunks)
+        )
+
+    with col2:
+
+        st.metric(
+            "Documents Processed",
+            len(uploaded_files)
+        )
+
+    with st.expander(
+        "View Sample Chunks"
+    ):
+
+        for idx, chunk in enumerate(
+            st.session_state.chunks[:5]
+        ):
+
+            st.markdown(
+                f"### Chunk {idx + 1}"
+            )
+
+            st.write(
+                chunk[:1000]
+            )
+
+# =========================================================
+# SCREEN 3 - ROLE BASED OUTPUTS
 # =========================================================
 
 if st.session_state.processed:
 
     st.header(
-        "2. Generate Team-Specific Output"
+        "3. Role-Based Output Generation"
     )
 
-    team = st.selectbox(
-        "Generate For",
-        [
-            "Functional Team",
-            "Technical Team",
-            "Support Team"
-        ]
-    )
+    col1, col2 = st.columns(2)
 
-    additional_instruction = st.text_area(
-        "Additional Instructions",
-        placeholder="""
-Examples:
-- Focus on approval workflow
-- Explain integrations
-- Include troubleshooting
-        """
-    )
+    with col1:
+
+        role = st.selectbox(
+            "Select Role",
+            [
+                "Functional Team",
+                "Technical Team",
+                "Support Team"
+            ]
+        )
+
+    with col2:
+
+        output_type = st.selectbox(
+            "Select Output Type",
+            [
+                "SOP",
+                "Release Notes",
+                "FAQ",
+                "Training Guide",
+                "Technical Summary",
+                "Troubleshooting Guide"
+            ]
+        )
 
     if st.button(
         "Generate Output"
     ):
 
         with st.spinner(
-            "Generating Output..."
+            "Generating AI Output..."
         ):
 
-            output, images = (
-                generate_output(
-                    team,
-                    additional_instruction
-                )
+            output = generate_output(
+                role,
+                output_type
             )
 
         st.subheader(
@@ -814,19 +515,6 @@ Examples:
 
         st.markdown(output)
 
-        if images:
-
-            st.subheader(
-                "Relevant Screenshots"
-            )
-
-            for img in images:
-
-                st.image(
-                    img,
-                    use_container_width=True
-                )
-
 # =========================================================
 # FOOTER
 # =========================================================
@@ -834,5 +522,5 @@ Examples:
 st.divider()
 
 st.caption(
-    "Final Stable MVP"
+    "Phase-1 MVP | Streamlit + Gemini + FAISS + SentenceTransformers"
 )

@@ -538,25 +538,93 @@ def generate_output(
         :MAX_CONTEXT_LENGTH
     ]
 
-    prompt = f"""
-    You are an enterprise AI assistant.
+    if team == "Functional Team":
 
-    TARGET TEAM:
-    {team}
+    prompt = f"""
+    You are a Functional Consultant.
 
     CONTEXT:
     {context}
 
+    TASK:
+    Generate a business-oriented implementation summary.
+
+    FORMAT:
+    # Business Overview
+    # User Workflow
+    # Configurations
+    # Validation Rules
+    # Business Impact
+    # Key User Actions
+
+    STYLE:
+    - Business friendly
+    - Process oriented
+    - Functional language only
+    - Avoid deep technical jargon
+
     ADDITIONAL INSTRUCTIONS:
     {additional_instruction}
-
-    RULES:
-    - Use only provided context
-    - Do not hallucinate
-    - Keep concise
-    - Use structured formatting
     """
 
+elif team == "Technical Team":
+
+    prompt = f"""
+    You are a Technical Architect.
+
+    CONTEXT:
+    {context}
+
+    TASK:
+    Generate a technical implementation summary.
+
+    FORMAT:
+    # Technical Overview
+    # APIs Impacted
+    # Database Changes
+    # Integrations
+    # Deployment Impact
+    # Dependencies
+    # Technical Risks
+
+    STYLE:
+    - Engineering focused
+    - Technical terminology
+    - Implementation oriented
+    - Mention system impacts
+
+    ADDITIONAL INSTRUCTIONS:
+    {additional_instruction}
+    """
+
+else:
+
+    prompt = f"""
+    You are a Support Engineer.
+
+    CONTEXT:
+    {context}
+
+    TASK:
+    Generate a support troubleshooting guide.
+
+    FORMAT:
+    # Common Issues
+    # Error Scenarios
+    # Troubleshooting Steps
+    # Logs to Check
+    # Retry Mechanism
+    # Escalation Guidance
+
+    STYLE:
+    - Operational
+    - Troubleshooting oriented
+    - Focus on issue handling
+    - Mention validations and failures
+
+    ADDITIONAL INSTRUCTIONS:
+    {additional_instruction}
+    """
     try:
 
         model = genai.GenerativeModel(
